@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NexusNAS — Votre stockage intelligent</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="icon" type="image/svg+xml" href="/static/img/icon.svg">
+    <!-- PWA -->
+    <link rel="manifest" href="/static/manifest.json">
+    <link rel="apple-touch-icon" href="/static/img/icon-192.png">
+    <meta name="theme-color" content="#E63946">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="NexusNAS">
+    <meta name="description" content="Stockage réseau privé intelligent">
+</head>
+<body>
+
+<!-- ═══ Toast Container ═══ -->
+<div id="toast-container" class="toast-container"></div>
+
+<!-- ═══ Auth Screen ═══ -->
+<div id="auth-screen" class="auth-screen">
+    <div class="auth-card">
+        <div class="auth-logo">
+            <div class="logo-icon">💾</div>
+            <h1>NexusNAS</h1>
+            <p>Stockage réseau intelligent</p>
+        </div>
+
+        <div class="auth-tabs">
+            <button class="auth-tab active" data-tab="login" onclick="switchAuthTab('login')">Connexion</button>
+            <button class="auth-tab" data-tab="register" onclick="switchAuthTab('register')">Inscription</button>
+        </div>
+
+        <!-- Login Form -->
+        <form id="login-form" onsubmit="handleLogin(event)">
+            <div class="form-group">
+                <label>Nom d'utilisateur</label>
+                <input class="form-input" name="username" type="text" placeholder="votre_pseudo" autocomplete="username" required>
+            </div>
+            <div class="form-group">
+                <label>Mot de passe</label>
+                <input class="form-input" name="password" type="password" placeholder="••••••••" autocomplete="current-password" required>
+            </div>
+            <button class="btn btn-primary" type="submit">Se connecter</button>
+        </form>
+
+        <!-- Register Form -->
+        <form id="register-form" style="display:none;" onsubmit="handleRegister(event)">
+            <div class="form-group">
+                <label>Nom d'utilisateur</label>
+                <input class="form-input" name="username" type="text" placeholder="votre_pseudo" autocomplete="username" required>
+            </div>
+            <div class="form-group">
+                <label>Email</label>
+                <input class="form-input" name="email" type="email" placeholder="vous@email.com" autocomplete="email" required>
+            </div>
+            <div class="form-group">
+                <label>Mot de passe</label>
+                <input class="form-input" name="password" type="password" placeholder="••••••••" autocomplete="new-password" required>
+            </div>
+            <div class="form-group">
+                <label>Confirmer le mot de passe</label>
+                <input class="form-input" name="confirm" type="password" placeholder="••••••••" autocomplete="new-password" required>
+            </div>
+            <button class="btn btn-primary" type="submit">Créer mon compte</button>
+        </form>
+    </div>
+</div>
+
+<!-- ═══ App Layout ═══ -->
+<div id="app-layout" class="app-layout" style="display:none;">
+
+    <!-- Sidebar overlay (mobile) -->
+    <div id="sidebar-overlay" class="sidebar-overlay" onclick="toggleSidebar()"></div>
+
+    <!-- Sidebar -->
+    <aside class="sidebar">
+        <div class="sidebar-header">
+            <div class="sidebar-brand">
+                <div class="brand-icon">💾</div>
+                <div>
+                    <h2>NexusNAS</h2>
+                    <span>v1.0.0</span>
+                </div>
+            </div>
+        </div>
+
+        <nav class="sidebar-nav">
+            <div class="nav-section">
+                <div class="nav-section-title">Navigation</div>
+                <button class="nav-item active" data-section="dashboard" onclick="navigateTo('dashboard')">
+                    <span class="nav-icon">📊</span> Tableau de bord
+                </button>
+                <button class="nav-item" data-section="files" onclick="navigateTo('files')">
+                    <span class="nav-icon">📂</span> Mes fichiers
+                </button>
+                <button class="nav-item" data-section="favorites" onclick="navigateTo('favorites')">
+                    <span class="nav-icon">⭐</span> Favoris
+                </button>
+                <button class="nav-item" data-section="trash" onclick="navigateTo('trash')">
+                    <span class="nav-icon">🗑️</span> Corbeille
+                </button>
+            </div>
+
+            <div class="nav-section">
+                <div class="nav-section-title">Catégories</div>
+                <button class="nav-item" data-section="images" onclick="navigateTo('images')">
+                    <span class="nav-icon">🖼️</span> Images
+                </button>
+                <button class="nav-item" data-section="videos" onclick="navigateTo('videos')">
+                    <span class="nav-icon">🎬</span> Vidéos
+                </button>
+                <button class="nav-item" data-section="documents" onclick="navigateTo('documents')">
+                    <span class="nav-icon">📄</span> Documents
+                </button>
+                <button class="nav-item" data-section="audio" onclick="navigateTo('audio')">
+                    <span class="nav-icon">🎵</span> Audio
+                </button>
+            </div>
+
+            <div class="nav-section" id="admin-nav" style="display:none;">
+                <div class="nav-section-title">Administration</div>
+                <button class="nav-item" data-section="users" onclick="navigateTo('users')">
+                    <span class="nav-icon">👥</span> Utilisateurs
+                </button>
+                <button class="nav-item" data-section="system" onclick="navigateTo('system')">
+                    <span class="nav-icon">🖥️</span> Système
+                </button>
+            </div>
+
+            <div class="nav-section">
+                <div class="nav-section-title">Compte</div>
+                <button class="nav-item" data-section="settings" onclick="navigateTo('settings')">
+                    <span class="nav-icon">⚙️</span> Paramètres
+                </button>
+            </div>
+        </nav>
+
+        <div class="sidebar-user">
+            <div class="user-avatar" id="sidebar-avatar">M</div>
+            <div class="user-info">
+                <div class="user-name" id="sidebar-username">Utilisateur</div>
+                <div class="user-role" id="sidebar-role">Utilisateur</div>
+            </div>
+            <button class="logout-btn" onclick="logout()" title="Déconnexion">🚪</button>
+        </div>
+    </aside>
+
+    <!-- Main -->
+    <main class="main-content">
+        <!-- Header -->
+        <header class="main-header">
+            <button class="btn btn-ghost btn-icon mobile-menu-btn" id="mobile-menu-btn" onclick="toggleSidebar()" style="display:none;">☰</button>
+            <div class="header-breadcrumb" id="header-breadcrumb">
+                <span class="breadcrumb-item current">🏠 NexusNAS</span>
+            </div>
+            <div class="header-search">
+                <span class="search-icon">🔍</span>
+                <input type="text" id="search-input" placeholder="Rechercher des fichiers...">
+            </div>
+            <div class="header-actions">
+                <button class="btn btn-primary btn-sm" onclick="openUploadOverlay()" style="width:auto;padding:8px 16px;">
+                    ⬆️ Upload
+                </button>
+            </div>
+        </header>
+
+        <!-- Content -->
+        <div class="content-area" id="content-area">
+            <div class="loading-center"><div class="spinner"></div></div>
+        </div>
+    </main>
+</div>
+
+<!-- ═══ Upload Overlay ═══ -->
+<div id="upload-overlay" class="upload-overlay">
+    <div id="upload-zone" class="upload-zone">
+        <div class="upload-icon">⬆️</div>
+        <h3>Glissez vos fichiers ici</h3>
+        <p>ou cliquez pour sélectionner</p>
+        <button class="btn btn-secondary" style="width:auto;">Parcourir</button>
+        <input type="file" id="upload-input" multiple hidden>
+    </div>
+</div>
+
+<!-- ═══ Upload Progress ═══ -->
+<div id="upload-progress" class="upload-progress"></div>
+
+<!-- ═══ Modal ═══ -->
+<div id="modal-overlay" class="modal-overlay" onclick="if(event.target===this)closeModal()">
+    <div class="modal">
+        <div class="modal-title" id="modal-title"></div>
+        <div id="modal-body"></div>
+        <div class="modal-actions">
+            <button class="btn btn-secondary btn-sm" onclick="closeModal()">Annuler</button>
+            <button class="btn btn-primary btn-sm" style="width:auto;" onclick="confirmModal()">Confirmer</button>
+        </div>
+    </div>
+</div>
+
+<!-- ═══ Preview Overlay ═══ -->
+<div id="preview-overlay" class="preview-overlay">
+    <div class="preview-header">
+        <span id="preview-title" class="preview-title"></span>
+        <button class="btn btn-ghost btn-sm" onclick="closePreview()">✕ Fermer</button>
+    </div>
+    <div class="preview-body" id="preview-body"></div>
+</div>
+
+<!-- ═══ Context Menu ═══ -->
+<div id="context-menu" class="context-menu"></div>
+
+<script src="/static/js/app.js"></script>
+<script>
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js', { scope: '/' })
+            .then(reg => console.log('SW registered:', reg.scope))
+            .catch(err => console.warn('SW registration failed:', err));
+    });
+}
+</script>
+</body>
+</html>
