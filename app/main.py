@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import os
 
 from app.database import init_db
-from app.routers import auth, files, system
+from app.routers import auth, files, system, shares, ws
 from app.config import settings
 
 
@@ -35,6 +35,8 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(files.router)
 app.include_router(system.router)
+app.include_router(shares.router)
+app.include_router(ws.router)
 
 # Static files
 static_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static")

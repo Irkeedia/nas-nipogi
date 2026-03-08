@@ -1,6 +1,8 @@
 import os
 import uuid
 import shutil
+import zipfile
+import tempfile
 import aiofiles
 import datetime
 from typing import Optional
@@ -14,6 +16,7 @@ from app.models.models import User, FileEntry, ActivityLog, ShareLink
 from app.utils.auth import get_current_user
 from app.utils.files import get_file_category, get_mime_type, generate_thumbnail, format_size
 from app.config import settings
+from app.routers.ws import emit_upload, emit_delete, emit_move, emit_quota_warning
 
 router = APIRouter(prefix="/api/files", tags=["files"])
 
@@ -195,6 +198,9 @@ async def upload_files(
     uploaded = []
     user_storage = get_user_storage_path(current_user)
 
+    # Calculate total upload size first for quota check
+    total_upload_size = 0
+
     for upload_file in files:
         # Unique filename to prevent collisions
         ext = os.path.splitext(upload_file.filename)[1]
@@ -204,14 +210,29 @@ async def upload_files(
 
         os.makedirs(os.path.dirname(abs_path), exist_ok=True)
 
-        # Stream write
+        # Stream write with quota enforcement
         size = 0
         async with aiofiles.open(abs_path, 'wb') as out_file:
             while chunk := await upload_file.read(1024 * 1024):  # 1MB chunks
-                await out_file.write(chunk)
                 size += len(chunk)
+                # Check quota before writing
+                if current_user.storage_quota > 0 and (current_user.storage_used + total_upload_size + size) > current_user.storage_quota:
+                    await out_file.close()
+                    # Cleanup partially written file
+                    if os.path.exists(abs_path):
+                        os.remove(abs_path)
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"Quota de stockage dépassé. "
+                               f"Utilisé: {format_size(current_user.storage_used)}, "
+                               f"Quota: {format_size(current_user.storage_quota)}, "
+                               f"Fichier: {format_size(size)}"
+                    )
+                await out_file.write(chunk)
 
-        # Generate thumbnail for images
+        total_upload_size += size
+
+        # Generate thumbnail for images and videos
         thumb_name = f"{uuid.uuid4().hex}.jpg"
         thumbnail = generate_thumbnail(abs_path, thumb_name)
 
@@ -245,6 +266,25 @@ async def upload_files(
     for f in uploaded:
         await db.refresh(f)
 
+    # WebSocket notifications
+    await emit_upload(
+        current_user.id,
+        uploaded[0].name if len(uploaded) == 1 else f"{len(uploaded)} fichiers",
+        format_size(total_upload_size),
+        count=len(uploaded),
+    )
+
+    # Quota warning if > 80%
+    if current_user.storage_quota > 0:
+        percent = (current_user.storage_used / current_user.storage_quota) * 100
+        if percent >= 80:
+            await emit_quota_warning(
+                current_user.id,
+                round(percent, 1),
+                format_size(current_user.storage_used),
+                format_size(current_user.storage_quota),
+            )
+
     return [file_to_response(f) for f in uploaded]
 
 
@@ -260,7 +300,7 @@ async def download_file(
         )
     )
     file_entry = result.scalar_one_or_none()
-    if not file_entry or file_entry.is_folder:
+    if not file_entry:
         raise HTTPException(status_code=404, detail="Fichier non trouvé")
 
     abs_path = os.path.join(get_user_storage_path(current_user), file_entry.path)
@@ -270,6 +310,21 @@ async def download_file(
     log = ActivityLog(user_id=current_user.id, action="download", target_name=file_entry.name)
     db.add(log)
     await db.commit()
+
+    # Folder download as ZIP
+    if file_entry.is_folder:
+        zip_path = os.path.join(tempfile.gettempdir(), f"download_{file_entry.id}_{uuid.uuid4().hex[:8]}.zip")
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for root, dirs, files_in_dir in os.walk(abs_path):
+                for fname in files_in_dir:
+                    file_abs = os.path.join(root, fname)
+                    arcname = os.path.relpath(file_abs, os.path.dirname(abs_path))
+                    zf.write(file_abs, arcname)
+        return FileResponse(
+            zip_path,
+            filename=f"{file_entry.name}.zip",
+            media_type="application/zip",
+        )
 
     return FileResponse(
         abs_path,
@@ -415,10 +470,15 @@ async def delete_file(
         if os.path.exists(thumb_abs):
             os.remove(thumb_abs)
 
-    log = ActivityLog(user_id=current_user.id, action="delete", target_name=file_entry.name)
+    file_name = file_entry.name
+    log = ActivityLog(user_id=current_user.id, action="delete", target_name=file_name)
     db.add(log)
     await db.delete(file_entry)
     await db.commit()
+
+    # WebSocket notification
+    await emit_delete(current_user.id, file_name)
+
     return {"message": "Fichier supprimé"}
 
 
@@ -509,3 +569,96 @@ async def get_breadcrumb(
         current_id = entry.parent_id
 
     return breadcrumb
+
+
+@router.put("/{file_id}/move", response_model=FileResponse_)
+async def move_file(
+    file_id: int,
+    req: MoveRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Move a file or folder to another parent folder."""
+    result = await db.execute(
+        select(FileEntry).where(
+            and_(FileEntry.id == file_id, FileEntry.owner_id == current_user.id)
+        )
+    )
+    file_entry = result.scalar_one_or_none()
+    if not file_entry:
+        raise HTTPException(status_code=404, detail="Fichier non trouvé")
+
+    user_storage = get_user_storage_path(current_user)
+    old_abs = os.path.join(user_storage, file_entry.path)
+
+    # Resolve target parent
+    new_parent_path = ""
+    if req.target_parent_id is not None:
+        parent_result = await db.execute(
+            select(FileEntry).where(
+                and_(
+                    FileEntry.id == req.target_parent_id,
+                    FileEntry.owner_id == current_user.id,
+                    FileEntry.is_folder == True,
+                )
+            )
+        )
+        target_parent = parent_result.scalar_one_or_none()
+        if not target_parent:
+            raise HTTPException(status_code=404, detail="Dossier cible non trouvé")
+
+        # Prevent moving a folder into itself or its children
+        if file_entry.is_folder:
+            check_id = req.target_parent_id
+            while check_id:
+                if check_id == file_id:
+                    raise HTTPException(status_code=400, detail="Impossible de déplacer un dossier dans lui-même")
+                check_result = await db.execute(
+                    select(FileEntry.parent_id).where(FileEntry.id == check_id)
+                )
+                check_id = check_result.scalar_one_or_none()
+
+        new_parent_path = target_parent.path
+
+    new_rel = os.path.join(new_parent_path, file_entry.name) if new_parent_path else file_entry.name
+    new_abs = os.path.join(user_storage, new_rel)
+
+    # Move physically
+    if os.path.exists(old_abs):
+        os.makedirs(os.path.dirname(new_abs) if os.path.dirname(new_abs) else user_storage, exist_ok=True)
+        shutil.move(old_abs, new_abs)
+
+    # Update DB
+    old_path = file_entry.path
+    file_entry.path = new_rel
+    file_entry.parent_id = req.target_parent_id
+
+    # If it's a folder, update all children paths recursively
+    if file_entry.is_folder:
+        children_result = await db.execute(
+            select(FileEntry).where(
+                and_(
+                    FileEntry.owner_id == current_user.id,
+                    FileEntry.path.startswith(old_path + os.sep),
+                )
+            )
+        )
+        children = children_result.scalars().all()
+        for child in children:
+            child.path = child.path.replace(old_path, new_rel, 1)
+
+    destination = '/' + new_parent_path if new_parent_path else 'racine'
+    log = ActivityLog(
+        user_id=current_user.id,
+        action="move",
+        target_name=file_entry.name,
+        details=f"Déplacé vers {destination}",
+    )
+    db.add(log)
+    await db.commit()
+    await db.refresh(file_entry)
+
+    # WebSocket notification
+    await emit_move(current_user.id, file_entry.name, destination)
+
+    return file_to_response(file_entry)
